@@ -1417,8 +1417,194 @@ document.querySelectorAll('.modal-overlay').forEach(m=>m.addEventListener('click
 // TELA 1 — CLIENTES
 // ══════════════════════════════════════════
 const MESES_NOMES = ['','Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+const GRAD = ['linear-gradient(135deg,#FF6B35,#FF3D00)','linear-gradient(135deg,#7C5CFC,#5B3FD9)','linear-gradient(135deg,#00D68F,#00A86B)'];
 
-// function renderClientes já definida acima
+function renderClientes(){
+  const grid = document.getElementById('clientes-grid');
+  if(!grid) return;
+  const total = db.clientes.length;
+  document.getElementById('clientes-count').textContent = total ? '('+total+')' : '';
+  grid.innerHTML = '';
+  db.clientes.forEach((c,idx) => {
+    const hoje = new Date();
+    const dia = hoje.getDate();
+    const vence = parseInt(c.vencimento)||0;
+    const pagMes = db.pagamentos.filter(p=>p.clienteId===c.id && p.mes===hoje.getMonth()+1 && p.ano===hoje.getFullYear());
+    let stCls='pendente', stTxt='Pendente';
+    if(pagMes.some(p=>p.status==='pago')){ stCls='pago'; stTxt='Pago'; }
+    else if(vence && dia>vence){ stCls='atrasado'; stTxt='Atrasado'; }
+    const totalMens = parseFloat(c.mensalidade||0)+parseFloat(c.verba||0);
+    const rels = db.relatorios.filter(r=>r.clienteId===c.id);
+    const grad = GRAD[idx%GRAD.length];
+    const card = document.createElement('div');
+    card.className = 'cliente-card';
+    card.style.animationDelay = (idx*0.06)+'s';
+    card.innerHTML = `
+      <div class="cliente-card-accent" style="background:${grad};"></div>
+      <div class="cliente-card-body">
+        <div class="cliente-card-top">
+          <div class="cliente-logo">${c.logo?`<img src="${c.logo}" alt="${c.nome}"/>`:`<span class="cliente-logo-letra">${(c.nome||'?')[0].toUpperCase()}</span>`}</div>
+          <div class="cliente-info">
+            <div class="cliente-nome">${c.nome}</div>
+            <div class="cliente-seg">${c.segmento||'Sem segmento'}</div>
+          </div>
+          <div class="status-pill ${stCls}"><span class="status-pill-dot"></span>${stTxt}</div>
+        </div>
+        <div class="cliente-card-metrics">
+          <div class="metric-cell"><div class="metric-val">R$ ${fmtBR(totalMens)}</div><div class="metric-lbl">Mensalidade</div></div>
+          <div class="metric-cell"><div class="metric-val">${rels.length}</div><div class="metric-lbl">Relatórios</div></div>
+          <div class="metric-cell"><div class="metric-val">${vence||'—'}</div><div class="metric-lbl">Vence dia</div></div>
+        </div>
+      </div>`;
+    card.onclick = ()=>abrirCliente(c.id);
+    grid.appendChild(card);
+  });
+}
+
+function mudarTab(nome, btn){
+  document.querySelectorAll('.tab-btn').forEach(t=>{ t.classList.remove('active'); t.setAttribute('aria-selected','false'); });
+  document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active'); btn.setAttribute('aria-selected','true');
+  document.getElementById('tab-'+nome).classList.add('active');
+  if(nome==='acumulado') renderAcumulado();
+}
+
+function renderMeses(){
+  const lista = document.getElementById('meses-list'); if(!lista) return;
+  const rels = db.relatorios.filter(r=>r.clienteId===clienteAtual).sort((a,b)=>(b.ano*12+b.mes)-(a.ano*12+a.mes));
+  lista.innerHTML = '';
+  if(!rels.length){
+    lista.innerHTML = `<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">Nenhum relatório ainda</div><div class="empty-state-desc">Crie o primeiro relatório deste cliente</div><button class="btn btn-primary" onclick="novoRelatorio()">+ Criar primeiro relatório</button></div>`;
+    return;
+  }
+  rels.forEach(r=>{
+    const d=r.dados||{};
+    const inv=parseBR(d['meta-invest']||0)+parseBR(d['google-invest']||0);
+    const cont=(parseInt(d['meta-contatos']||0)+parseInt(d['google-contatos']||0));
+    const div=document.createElement('div'); div.className='mes-card';
+    div.innerHTML=`<div class="mes-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div><div class="mes-info"><div class="mes-nome">${MESES_NOMES[r.mes]} ${r.ano}</div><div class="mes-resumo">${inv>0?'R$ '+fmtBR(inv)+' investidos · ':''}${cont>0?cont+' contatos':inv===0?'Sem dados ainda':''}</div></div><div class="mes-seta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>`;
+    div.onclick=()=>abrirRelatorio(r.id);
+    lista.appendChild(div);
+  });
+}
+
+function renderAcumulado(){
+  const rels=db.relatorios.filter(r=>r.clienteId===clienteAtual).sort((a,b)=>(a.ano*12+a.mes)-(b.ano*12+b.mes));
+  let totI=0,totC=0,totA=0;
+  const labs=[],dC=[],dI=[];
+  rels.forEach(r=>{
+    const d=r.dados||{};
+    const inv=parseBR(d['meta-invest']||0)+parseBR(d['google-invest']||0);
+    const cont=parseInt(d['meta-contatos']||0)+parseInt(d['google-contatos']||0);
+    const alc=parseInt(d['meta-alcance']||0)+parseInt(d['google-alcance']||0);
+    totI+=inv; totC+=cont; totA+=alc;
+    labs.push(MESES_NOMES[r.mes].slice(0,3)); dC.push(cont); dI.push(inv);
+  });
+  const cpl=totC>0?totI/totC:0;
+  document.getElementById('acum-stats').innerHTML=`
+    <div class="acum-stat-card"><div class="acum-stat-icon">💰</div><div class="acum-stat-val orange">R$ ${fmtBR(totI)}</div><div class="acum-stat-lbl">Total investido</div></div>
+    <div class="acum-stat-card"><div class="acum-stat-icon">📩</div><div class="acum-stat-val blue">${totC.toLocaleString('pt-BR')}</div><div class="acum-stat-lbl">Total de contatos</div></div>
+    <div class="acum-stat-card"><div class="acum-stat-icon">👀</div><div class="acum-stat-val purple">${totA.toLocaleString('pt-BR')}</div><div class="acum-stat-lbl">Total alcançado</div></div>
+    <div class="acum-stat-card"><div class="acum-stat-icon">💸</div><div class="acum-stat-val green">R$ ${cpl>0?fmtBR(cpl):'—'}</div><div class="acum-stat-lbl">CPL médio</div></div>
+    <div class="acum-stat-card"><div class="acum-stat-icon">📅</div><div class="acum-stat-val">${rels.length}</div><div class="acum-stat-lbl">Meses de parceria</div></div>`;
+  if(chartContatos) chartContatos.destroy();
+  if(chartInvest) chartInvest.destroy();
+  const chOpts=()=>({responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#60607A',font:{size:10}},grid:{color:'rgba(255,255,255,0.04)'}},y:{ticks:{color:'#60607A',font:{size:10}},grid:{color:'rgba(255,255,255,0.04)'},beginAtZero:true}}});
+  const cc=document.getElementById('chart-contatos');
+  if(cc) chartContatos=new Chart(cc,{type:'bar',data:{labels:labs,datasets:[{data:dC,backgroundColor:'rgba(77,158,255,0.25)',borderColor:'#4D9EFF',borderWidth:1.5,borderRadius:6}]},options:chOpts()});
+  const ci=document.getElementById('chart-invest');
+  if(ci) chartInvest=new Chart(ci,{type:'line',data:{labels:labs,datasets:[{data:dI,borderColor:'#FF6B35',backgroundColor:'rgba(255,107,53,0.08)',borderWidth:2.5,pointBackgroundColor:'#FF6B35',pointRadius:4,tension:0.4,fill:true}]},options:chOpts()});
+}
+
+function renderFinanceiro(){
+  const c=db.clientes.find(x=>x.id===clienteAtual); if(!c) return;
+  const mens=parseFloat(c.mensalidade||0), verba=parseFloat(c.verba||0), total=mens+verba;
+  const hoje=new Date(), dia=hoje.getDate(), vence=parseInt(c.vencimento)||0;
+  const pagMes=db.pagamentos.filter(p=>p.clienteId===clienteAtual&&p.mes===hoje.getMonth()+1&&p.ano===hoje.getFullYear());
+  let stTxt='⏳ Pendente',stCls='yellow';
+  if(pagMes.some(p=>p.status==='pago')){ stTxt='✅ Pago'; stCls='green'; }
+  else if(vence&&dia>vence){ stTxt='⚠️ Atrasado'; stCls='red'; }
+  document.getElementById('fin-contrato').innerHTML=`
+    <div class="fin-cell"><div class="fin-cell-lbl">Mensalidade</div><div class="fin-cell-val orange">R$ ${fmtBR(mens)}</div></div>
+    <div class="fin-cell"><div class="fin-cell-lbl">Verba de tráfego</div><div class="fin-cell-val">R$ ${fmtBR(verba)}</div></div>
+    <div class="fin-cell"><div class="fin-cell-lbl">Total mensal</div><div class="fin-cell-val green">R$ ${fmtBR(total)}</div></div>
+    <div class="fin-cell"><div class="fin-cell-lbl">Vencimento</div><div class="fin-cell-val">Dia ${vence||'—'}</div></div>
+    <div class="fin-cell"><div class="fin-cell-lbl">Status deste mês</div><div class="fin-cell-val ${stCls}">${stTxt}</div></div>`;
+  const pags=db.pagamentos.filter(p=>p.clienteId===clienteAtual&&p.status==='pago');
+  const totFat=pags.reduce((s,p)=>s+parseFloat(p.valor||0),0);
+  const mesesAtivos=db.relatorios.filter(r=>r.clienteId===clienteAtual).length;
+  const totVerba=db.relatorios.filter(r=>r.clienteId===clienteAtual).reduce((s,r)=>{const d=r.dados||{};return s+parseBR(d['meta-invest']||0)+parseBR(d['google-invest']||0);},0);
+  document.getElementById('fin-totais').innerHTML=`
+    <div class="fin-cell"><div class="fin-cell-lbl">Total faturado</div><div class="fin-cell-val green">R$ ${fmtBR(totFat)}</div></div>
+    <div class="fin-cell"><div class="fin-cell-lbl">Total gerenciado em tráfego</div><div class="fin-cell-val blue">R$ ${fmtBR(totVerba)}</div></div>
+    <div class="fin-cell"><div class="fin-cell-lbl">Meses de parceria</div><div class="fin-cell-val">${mesesAtivos}</div></div>`;
+  const pList=document.getElementById('pag-list');
+  const todos=db.pagamentos.filter(p=>p.clienteId===clienteAtual).sort((a,b)=>(b.ano*12+b.mes)-(a.ano*12+a.mes));
+  pList.innerHTML=todos.length?'':'<div style="padding:20px;text-align:center;color:var(--text3);font-size:13px;">Nenhum pagamento registrado</div>';
+  todos.forEach(p=>{
+    const div=document.createElement('div'); div.className='pag-item';
+    div.innerHTML=`<span class="pag-mes">${MESES_NOMES[p.mes]} ${p.ano}</span><div class="pag-right"><span class="pag-val">R$ ${fmtBR(parseFloat(p.valor||0))}</span><span class="status-tag ${p.status}">${p.status}</span>${p.status!=='pago'?`<button class="mark-pago-btn" onclick="marcarPago('${p.id}')">✓ Pago</button>`:''}</div>`;
+    pList.appendChild(div);
+  });
+  document.getElementById('obs-interna').value=db.clientes.find(x=>x.id===clienteAtual)?.obs||'';
+}
+
+function inicializarGraficos(){
+  if(chartFollowers) chartFollowers.destroy();
+  if(chartLeads) chartLeads.destroy();
+  const opts=()=>({responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#60607A',font:{size:10}},grid:{color:'rgba(255,255,255,0.04)'}},y:{ticks:{color:'#60607A',font:{size:10}},grid:{color:'rgba(255,255,255,0.04)'},beginAtZero:true}}});
+  const cf=document.getElementById('cFollowers');
+  if(cf) chartFollowers=new Chart(cf,{type:'line',data:{labels:['Início','Sem 1','Sem 2','Sem 3','Sem 4'],datasets:[{data:[0,0,0,0,0],borderColor:'#fff',backgroundColor:'rgba(255,255,255,0.08)',borderWidth:2.5,pointBackgroundColor:'#fff',pointRadius:4,tension:0.4,fill:true}]},options:opts()});
+  const cl=document.getElementById('cLeads');
+  if(cl) chartLeads=new Chart(cl,{type:'line',data:{labels:['Semana 1','Semana 2','Semana 3','Semana 4'],datasets:[{data:[0,0,0,0],borderColor:'#00D68F',backgroundColor:'rgba(0,214,143,0.08)',borderWidth:2.5,pointBackgroundColor:'#00D68F',pointRadius:5,tension:0.4,fill:true}]},options:opts()});
+}
+
+function renderTasks(){
+  const c=document.getElementById('tasks-container'); if(!c) return;
+  c.innerHTML='';
+  tasks.forEach((t,i)=>{
+    const d=document.createElement('div'); d.className='task-item'+(t.done?' done':'');
+    d.innerHTML=`<div class="task-check"></div><div class="task-label"><textarea rows="2" placeholder="Descreva a tarefa..." style="background:none;border:none;color:inherit;font-size:14px;font-family:inherit;outline:none;width:100%;resize:none;line-height:1.5;">${t.label}</textarea></div><button class="task-del" onclick="event.stopPropagation();removeTask(${i})">✕</button>`;
+    d.querySelector('.task-check').addEventListener('click',()=>{tasks[i].done=!tasks[i].done;renderTasks();autoSaveTimer();});
+    d.querySelector('textarea').addEventListener('change',e=>{tasks[i].label=e.target.value;autoSaveTimer();});
+    d.querySelector('textarea').addEventListener('click',e=>e.stopPropagation());
+    c.appendChild(d);
+  });
+}
+
+function renderCamps(){
+  const c=document.getElementById('camp-container'); if(!c) return; c.innerHTML='';
+  camps.forEach((cp,i)=>{
+    const d=document.createElement('div'); d.className='camp-card '+cp.cls;
+    d.innerHTML=`
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px;">
+        <span class="camp-pill ${cp.badge}"><input value="${cp.badgeTxt||''}" oninput="autoSaveTimer()"/></span>
+        <button onclick="event.stopPropagation();removeCamp(${i})" style="background:rgba(255,71,87,.1);border:1px solid rgba(255,71,87,.2);border-radius:8px;color:#FF4757;font-size:14px;padding:4px 8px;cursor:pointer;line-height:1;flex-shrink:0;">🗑️</button>
+      </div>
+      <input class="camp-name-input" value="${(cp.name||'').replace(/"/g,'&quot;')}" placeholder="Nome da campanha" oninput="autoSaveTimer()"/>
+      <div class="camp-metrics">
+        <div class="camp-metric"><div class="camp-metric-lbl"><input value="${cp.m1lbl||''}" oninput="autoSaveTimer()"/></div><div class="camp-metric-val${cp.dest?' dest':''}"><input value="${cp.m1val||''}" placeholder="0" oninput="autoSaveTimer()"/></div></div>
+        <div class="camp-metric"><div class="camp-metric-lbl"><input value="${cp.m2lbl||''}" oninput="autoSaveTimer()"/></div><div class="camp-metric-val${cp.dest?' dest':''}"><input value="${cp.m2val||''}" placeholder="0" oninput="autoSaveTimer()"/></div></div>
+      </div>
+      <div class="camp-foot"><input value="${(cp.rodape||'').replace(/"/g,'&quot;')}" placeholder="Observação..." oninput="autoSaveTimer()"/></div>`;
+    c.appendChild(d);
+  });
+}
+
+function renderWins(){
+  const c=document.getElementById('wins-container'); if(!c) return; c.innerHTML='';
+  wins.forEach(w=>{
+    const d=document.createElement('div'); d.className='win-card';
+    d.innerHTML=`<input class="win-emoji-input" value="${w.emoji}"/><input class="win-title-input" placeholder="Título" value="${(w.title||'').replace(/"/g,'&quot;')}" oninput="autoSaveTimer()"/><input class="win-desc-input" placeholder="Descrição" value="${(w.desc||'').replace(/"/g,'&quot;')}" oninput="autoSaveTimer()"/>`;
+    c.appendChild(d);
+  });
+}
+
+function addNext(){
+  const li=document.createElement('li'); li.className='next-item';
+  li.innerHTML='<span class="next-arrow">→</span><input class="next-input" placeholder="Próximo passo..." oninput="autoSaveTimer()"/>';
+  document.getElementById('next-list').appendChild(li);
+}
 
 
 function abrirModalCliente(){
@@ -1919,13 +2105,11 @@ function navTo(tab){
 }
 
 // Fix: renderClientes agora usa novas classes
-const _renderClientes = renderClientes;
 
 // renderClientes — versão consolidada acima
 
 
 // Fix: abrirCliente atualiza hero com novas classes
-const _abrirCliente = abrirCliente;
 function abrirCliente(id){
   clienteAtual = id;
   const c = db.clientes.find(x=>x.id===id); if(!c) return;
